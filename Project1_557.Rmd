@@ -1,0 +1,289 @@
+---
+title: "Project1-557"
+author: "Ben Straub, Hillary Koch, Jiawei Huang, Arif Masrur"
+date: "2/24/2017"
+output: pdf_document
+---
+
+# Project 1: Techniques for Model Comparison
+
+## Introduction
+
+The purpose of this project is to understand the different techniques used to compare models. Specifically, we will look at stepwise, ridge and lasso regression modeling techniques.  To accomplish this task, we will utilize the diabetes data set provided by Efron et al. (2003) in the R package "lars."  The first section of this project involves a short exploratory data analysis, the second section involves using stepwise, ridge and lasso on the "training" set of the data and on the "test" set.  The final section compares the mean squared errors (MSE) of the training and test data on the 3 techniques and selects our best model from the MSE.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+# Loading packages into R
+library(lars);library(knitr);library(car);library(ISLR);library(leaps);
+library(glmnet);library(MASS)
+```
+
+```{r, echo=FALSE}
+data(diabetes)
+n=dim(diabetes$x)[1]
+p=dim(diabetes$x)[2]
+set.seed(2016)
+test=sample(n, round(n/4))
+
+# Train
+y <- diabetes$y[-test]
+#y <- y-mean(y)
+X <- diabetes$x[-test,]
+
+# Test
+y.test <- diabetes$y[test]
+#y.test <- y.test - mean(y.test)
+X.test <- diabetes$x[test,]
+
+dat.train <- as.data.frame(cbind(y,X))
+dat.test <- as.data.frame(cbind(y.test, X.test))
+```
+
+
+```{r, eval=FALSE, echo=FALSE}
+#Reorganizing data into dataframe
+data(diabetes)
+attach(diabetes)
+y <- diabetes$y
+age <- diabetes$x[,1]
+sex <- diabetes$x[,2]
+bmi <- diabetes$x[,3]
+bp <- diabetes$x[,4]
+s1 <- diabetes$x[,5]
+s2 <- diabetes$x[,6]
+s3 <- diabetes$x[,7]
+s4 <- diabetes$x[,8]
+s5 <- diabetes$x[,9]
+s6 <- diabetes$x[,10]
+diabetes <- as.data.frame(cbind(y, age, sex, bmi, bp, s1, s2, s3, s4, s5, s6))
+#diabetes$y <- scale(diabetes$y, center=T, scale=T)
+#kable(head(diabetes))
+```
+
+```{r, echo=FALSE, eval=FALSE, results='hide'}
+## set aside a test set (25% of data)
+#set.seed(2016)  
+#n=length(diabetes$y)
+#n.test=round(n*.25)
+#n.train=n-n.test
+#n.test
+#n.train
+#test.idx=sample(1:n,size=n.test)
+#train.idx=(1:n)[-test.idx]
+#train=diabetes[train.idx,]
+#test=diabetes[test.idx,]
+```
+
+```{r, eval=FALSE, echo=FALSE}
+x=model.matrix(y~., diabetes)[,-1]
+y=diabetes$y
+
+## Splitting data into training and test samples
+train=sample(1:nrow(x), nrow(x)*0.75)
+test=(-train)
+y.test=y[test]
+```
+
+## Exploratory Data Analysis
+
+The diabetes sets contains 10 variables, age, sex, bmi, avg blood pressure, and six different blood serum measurements.  It takes the 10 measurements on 442 diabetic patients.  The repsonse of interest is a quantitative measure of disease progression one year after the baseline.  We first take the diabetes data set and partition the data into a training and test data set.  Twenty-five percent of the data will be kept as a test data set and the other seventy-five percent will be kept as our training data set.  The next step involves building a model of all main effects using least squares on the training data set. 
+
+```{r, echo=FALSE}
+# Least Squares model
+ls_model <- lm(y~., data=dat.train)
+kable(summary(ls_model)$coeff, caption='Least Squares')
+
+#ls_model_test <- lm(dat.test$y~sex+bmi+map+ltg, data=dat.test)
+#ls_model_train <- lm(dat.train$y~sex+bmi+map+ltg, data=dat.train)
+
+
+#ls_model_pred_test <- predict(ls_model_test, data=dat.test)
+#ls_model_pred_train <- predict(ls_model_train, data=dat.train)
+
+# MSE for Least Squares
+#mse_test_ls <- round(mean((as.data.frame(ls_model_pred_test)-dat.test$y)^2),2)
+#mse_train_ls <- round(mean((as.data.frame(ls_model_pred_train)-dat.train$y)^2),2)
+
+```
+
+Four predictors that are found to be statistically significant in the least squares model are sex, bmi, map and ltg.  The predictor sex has a negative coefficient of -215.18, which we interpret as a -215.18 decrease in diabetes progression for a 1 unit increases in the sex coefficient.  The coefficients tc and hdl also have negative coefficients, but are not significant to the model.  The final step of our EDA will involve looking at the residual plots for the least squares model.
+
+```{r, echo=FALSE, fig.height=3, fig.width=4}
+par(mfrow=c(1,1))
+plot(ls_model)
+```
+
+It appears that there are several minor violations of our key linear model assumptions.  The data contains a few outliers, which exhibit some leverage on the model as seen in the "Residuals vs Leverage" plot.  Also, in the Normal QQ-plot the model produces noticeable tails, which might indicate a violation of our model assumption of normally distributed data as well as a fanning effect in our Residuals vs Fitted values..  The response variable exhibits skewness in its histogram (not shown), which will also contribute to potential model violations.
+
+## Stepwise Regression
+
+We perform two types of stepwise regression on the diabetes data set, forward and backwards.  Forward selection begins with the null model, and then adds predictors to the model, one-at-a-time, until all of the predictors are in the model.  At each step the variable that gives the greatest additional improvement to the fit is added to the model.  Backwards begins with the full least squares model containing all of the predictors, and then removes the least useful predictor one-at-a-time.
+
+```{r, echo=FALSE, results='hide'}
+null = lm(y~1, data=dat.train)
+full = lm(y~., data=dat.train)
+forward <- stepAIC(null, scope=list(upper=full, lower=null), direction="forward")
+back <- stepAIC(full, scope=list(upper=full, lower=null), direction="backward")
+back.pred.test <- predict(back, data=dat.test)
+back.pred.train <- predict(back, data=dat.train)
+mse_test_back_step <- round(mean((as.data.frame(back.pred.test)-dat.test$y)^2),2)
+mse_train_back_step <- round(mean((as.data.frame(back.pred.train)-dat.train$y)^2),2)
+
+```
+
+```{r, echo=FALSE}
+a <- kable(summary(forward)$coeff, caption='Forwards StepAIC')
+b <- kable(summary(back)$coeff, caption='Backwards StepAIC')
+a
+b
+```
+
+The final model for the forward stepwise contains 5 variables, ltg, bmi, map, hdl and sex, which differs slightly from our original least squares model.  The final model for the backwards selection contain 6 variables, sex, bmi, map, tc, ldl and ltg  Using stepAIC() in the MASS package, the forward model gave an AIC of 2632.17 while the backwards model gave an AIC of 2631.98.  AIC is a measure of the relative quality of models for a set of data. Given a collection of models for the data, AIC estimates the quality of each model, relative to each of the other models, which provides us with a form of model selection.  Therefore, the backwards model will be selected as our final model for stepwise selection as it has the lowest AIC.
+
+## Ridge Regression
+
+Ridge regression is very similar to least squares, except that the coefficients for ridge are estimated by minimizing a slightly different quantity. In particular, the regression ridge regression coefficient estimates $\beta^R$ are the values that minimize the following equation:
+
+\begin{center}
+\includegraphics[width=250pt]{/Users/benStraub/Desktop/557/Ridge_Eqn.png}
+\end{center}
+
+The above equation has a tuning parameter, $\lambda$, which helps to address the  the bias-variance trade-off. As $\lambda$ increases, the flexibility of the ridge regression fit decreases, leading to decreased variance but increased bias.  We chose our lambda using the cross validation technique, which is outlined in our textbook as follows:  first, we partition the data into complementary subsets, performing the analysis on one subset(training set), and validating the analysis on the the other subset(testing set). Second, to reduce variability, multiple rounds of cross-validation are performed using different partitions, and lastly the validation results are averaged over the rounds.  The cv-lambda for our ridge regression model will penalize the coefficients, such that those who are the least efficient in your estimation will "shrink."  We can observe this shrinkage in the below plot titled, "Train Betas vs Lambda."
+
+```{r, eval=TRUE, echo=FALSE, comment=NA}
+par(mfrow=c(1,2))
+# MODEL SELECTION USING RIDGE REGRESSION
+#######################################################
+##
+## (3) ridge regression
+##
+#######################################################
+data(diabetes)
+n=dim(diabetes$x)[1]
+p=dim(diabetes$x)[2]
+set.seed(2016)
+test=sample(n, round(n/4))
+
+# Train
+y <- diabetes$y[-test]
+y <- y-mean(y)
+X <- diabetes$x[-test,]
+
+# Test
+y.test <- diabetes$y[test]
+y.test <- y.test - mean(y.test)
+X.test <- diabetes$x[test,]
+
+dat.train <- as.data.frame(cbind(y,X))
+dat.test <- as.data.frame(cbind(y.test, X.test))
+
+## Setting lambda
+grid=10^seq(10,-2, length = 100)
+
+
+## Running Ridge on Training Set
+ridge.mod=glmnet(X, y, alpha=0, lambda=grid,thresh =1e-12)
+plot.glmnet(ridge.mod, xvar="lambda", main="Train Betas vs Lambdas", label=TRUE)
+
+## Running Ridge Model on Test Set
+ridge.pred=predict(ridge.mod ,s=4, newx=X.test)
+#plot(ridge.pred)
+
+## Calculating MSE for Train Data
+
+## Calculating MSE for Test Data
+mse_test_ridge <- round(mean((ridge.pred-y.test)^2),2)
+# mean((mean(y[train])-y.test)^2)
+
+## Using Cross Validation for Ridge Model
+set.seed(2016) #Always set right before cross validation
+cv.out=cv.glmnet(X,y,alpha=0, nfolds=5) 
+plot(cv.out, main="Test Data MSE vs Lambda")
+bestlam =cv.out$lambda.min
+ridge.pred.test=predict(ridge.mod, s=bestlam, newx=X.test)
+
+## Calculating MSE for Test Data
+mse_test_cv_ridge <- round(mean((ridge.pred.test-y.test)^2),2)
+out=glmnet(X,y,alpha=0)
+
+## Calculating MSE for Train Data
+ridge.pred.train=predict(ridge.mod, s=bestlam, newx=X)
+mse_train_cv_ridge <- round(mean((ridge.pred.train-y)^2),2)
+
+```
+
+
+## Ridge Model Coefficients
+
+```{r, echo=FALSE, comment=NA}
+#library(xtable)
+predict(out,type="coefficients",s= bestlam)[1:11,]
+#ridge.table <- round(as.table(ridge.coef),2)
+#library(hwriter)
+#cat(hwrite(ridge.coef, border = 0, center=TRUE, table.frame='void', width='300px', table.style='padding: 50px', row.names=FALSE, row.style=list('font-weight:bold')))
+```
+
+Unlike the model chosen from stepwise selection, and the model chosen from LASSO (reported in the next section), the ridge model does not eliminate any covariates. The plot above for the MSE vs Lambda for cross-validation is shown with all 10 predictors being included and how the MSE changes with the change of lambda.  This unfortunately makes model interpretation more difficult. Interestingly, some of the covariates removed from the model chosen by stepwise selection displayed coefficients of larger magnitude in the ridge model.
+
+## Lasso Regression
+
+Lasso regression is similar to Ridge regression, but it allows for better model interpretability and variable selection.  The lasso model coefficients, $\beta^L_\lambda$, seeks to minimize the following quantity:
+
+\begin{center}
+\includegraphics[width=250pt]{/Users/benStraub/Desktop/557/Lasso_Eqn.png}
+\end{center}
+
+The noticeable difference between the ridge and lasso model is that the $\beta^2$ term in the ridge regression penalty has been replaced by a $|\beta|$ term. This new penalty term has the effect of forcing some of the coefficient estimates to be exactly equal to zero when the tuning parameter $\lambda$ is sufficiently large.  Forcing some of the coefficients to be zero can lead to better model interpretation and well as reducing the total number of predictors in the model.  In the plot, "Train Betas vs Lambda," we can visually see some of the coefficients shrinking very fast to zero, while others linger on before going to zero as lambda becomes sufficiently large.  
+
+```{r, eval=TRUE, echo=FALSE, results='hide'}
+c#######################################################
+#   LASSO
+#######################################################
+par(mfrow=c(1,2))
+
+## alpha=0 gives ridge regression
+## alpha=1 gives lasso regression
+
+lasso.mod=glmnet(X, y, alpha=1, lambda=grid)
+plot(lasso.mod, "lambda", main="Train Betas vs Lambdas")
+
+set.seed(2016) #Always set right before cross validation
+cv.out=cv.glmnet(X, y,alpha=1, nfolds=5)
+plot(cv.out, main="MSE and Predictors")
+bestlam =cv.out$lambda.min
+
+### Calculating MSE for Test Data
+lasso.pred.test=predict(lasso.mod,s=bestlam ,newx=X.test)
+mse_test_lasso <- round(mean((lasso.pred.test-y.test)^2),2)
+
+## Calculating MSE for Train Data
+lasso.pred.train=predict(lasso.mod,s=bestlam ,newx=X)
+mse_train_lasso <- round(mean((lasso.pred.train-y)^2),2)
+
+
+out=glmnet (X,y,alpha=1, lambda=grid)
+lasso.coef=predict(out ,type="coefficients",s= bestlam)[1:10,]
+lasso.table <- round(as.table(lasso.coef), 2)
+```
+
+LASSO penalizes covariates more heavily than ridge, and effectively removed three covariates from the model. The plot "MSE and Predictors" gives us how many predictors we should use in our model.  The numbers on top of the figure give the
+number of non-zero coefficients. Instead of using 10 predictors for the selected model if we would choose the one standard error estimate, then we should use four predictors in our final model.  Below you will find the coefficients for the covariates for the lasso model.  These are again not, however, the same covariates that were eliminated using stepwise selection.
+
+## Lasso Model Coefficients
+
+```{r, echo=FALSE, comment=NA}
+lasso.table
+#print(xtable(lasso.table), label=LateX)
+#| Least Squares | `r mse_test_ls` | `r mse_train_ls` | |
+```
+
+## Mean-Square Error for all Models
+
+ | Method | Test | Training |
+| ------------------------- | ----------|----------:|:------:|
+| Lasso  | `r mse_test_lasso`  | `r mse_train_lasso`  |  |  
+| Ridge-CV | `r mse_test_cv_ridge` | `r mse_train_cv_ridge` | |
+| Step  | `r mse_test_back_step` | `r mse_train_back_step` | |
+
+Stepwise AIC-based selection, as evidence by the mean squared prediction error both onto the training and test data sets, proved to be the worst fit. Alternatively, the LASSO and ridge models performed much better. LASSO displays slightly better performance than ridge for both the training and test data sets. Based on this criterion, and considering that a model with less variables is preferable, we select the fit produced by LASSO.
+
+All members of our group contributed equally to this project.  
